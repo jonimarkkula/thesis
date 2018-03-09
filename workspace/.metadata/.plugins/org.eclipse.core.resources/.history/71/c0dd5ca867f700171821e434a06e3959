@@ -1,0 +1,80 @@
+/*
+===============================================================================
+ Name        : opinnaytetyo.c
+ Author      : $Planea Oy
+ Version     :
+ Copyright   : $(copyright)
+ Description : main c function
+===============================================================================
+*/
+
+#include "LPC11Uxx.h"                        /* LPC11Uxx definitions */
+#include "gpio.h"
+#include "ledSetup.h"
+#include "type.h"
+#include "accelerometer.h"
+#include "timer16.h"
+#include <stdio.h>
+
+/* Main Program */
+
+int main (void) {
+
+	I2CInit();
+
+	_delay_ms(500);
+
+	setLedPinsOutput();
+
+	_delay_ms(500);
+
+	/*
+
+	unsigned char XYZReadings[6];
+	short Xout_12_bit, Yout_12_bit, Zout_12_bit;
+	float Xout_g, Yout_g, Zout_g;
+
+    */
+	int a = 0;
+
+
+
+
+
+	  /*Reset all registers to POR values*/
+	  //sendData(CTRL_REG2, 0x40);
+	  /* +/-2g range -> 1g = 16384/4 = 4096 counts */
+	  //sendData(XYZ_DATA_CFG_REG, 0x00);
+	  /* High Resolution mode */
+	  //sendData(CTRL_REG2, 0x02);
+	  /*ODR (Output data rate) = 1.56Hz, Reduced noise, Active Mode*/
+	  //sendData(CTRL_REG1, 0x3D);
+
+	  /* Loop forever */
+	  while (1)
+	  {
+
+		  //GPIOSetBitValue( LED1_L_ON );
+		  //GPIOSetBitValue( LED10_L_ON );
+
+		  /*
+
+		  XYZread(XYZReadings);
+
+		  Xout_12_bit = ((short) (XYZReadings[0]<<8 | XYZReadings[1])) >> 2;           // Compute 12-bit X-axis output value
+		  Yout_12_bit = ((short) (XYZReadings[2]<<8 | XYZReadings[3])) >> 2;           // Compute 12-bit Y-axis output value
+		  Zout_12_bit = ((short) (XYZReadings[4]<<8 | XYZReadings[5])) >> 2;           // Compute 12-bit Z-axis output value
+
+		  Xout_g = ((float) Xout_12_bit) / SENSITIVITY_2G;              	   // Compute X-axis output value in g's
+		  Yout_g = ((float) Yout_12_bit) / SENSITIVITY_2G;                     // Compute Y-axis output value in g's
+		  Zout_g = ((float) Zout_12_bit) / SENSITIVITY_2G;                     // Compute Z-axis output value in g's
+
+		  printf("Value of X: %f\n", Xout_g);
+		  _delay_ms(10);
+
+		  */
+
+		  a = whoIAm(a);
+	  }
+}
+

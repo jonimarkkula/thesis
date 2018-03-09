@@ -1,0 +1,84 @@
+/****************************************************************************
+ *   $Id:: uarttest.c 4015 2010-07-28 22:28:05Z usb00423                    $
+ *   Project: NXP LPC11Uxx UART example
+ *
+ *   Description:
+ *     This file contains UART test modules, main entry, to test UART APIs.
+*
+****************************************************************************
+* Software that is described herein is for illustrative purposes only
+* which provides customers with programming information regarding the
+* products. This software is supplied "AS IS" without any warranties.
+* NXP Semiconductors assumes no responsibility or liability for the
+* use of the software, conveys no license or title under any patent,
+* copyright, or mask work right to the product. NXP Semiconductors
+* reserves the right to make changes in the software without
+* notification. NXP Semiconductors also make no representation or
+* warranty that such application will be suitable for the specified
+* use without further testing or modification.
+
+* Permission to use, copy, modify, and distribute this software and its
+* documentation is hereby granted, under NXP Semiconductors'
+* relevant copyright in the software, without fee, provided that it
+* is used in conjunction with NXP Semiconductors microcontrollers.  This
+* copyright, permission, and disclaimer notice must appear in all copies of
+* this code.
+
+****************************************************************************/
+
+#include "LPC11Uxx.h"
+#include "uart.h"
+#include "gpio.h"
+
+
+int main (void) {
+
+
+  SystemCoreClockUpdate();
+  /* NVIC is installed inside UARTInit file. */
+  printf("MAIN FUNCTION\n");
+
+  UARTInit(38400);
+  GPIOSetDir ( 0 , 2 , 1 );
+  GPIOSetBitValue( 0 , 2 , 1 );
+
+  /*
+  UARTSend((uint8_t *)"AT+ROLE=1\r\n\r\n", 13);
+
+  if ( UARTCount != 0 )
+  {
+	  LPC_USART->IER = IER_THRE | IER_RLS;			// Disable RBR
+  	  UARTSend( (uint8_t *)UARTBuffer, UARTCount );
+  	  printf("UARTBuffer: %s\n", UARTBuffer);
+  	  UARTCount = 0;
+  	  LPC_USART->IER = IER_THRE | IER_RLS | IER_RBR;	// Re-enable RBR
+  }
+  */
+  //GPIOSetBitValue( 0 , 2 , 0 );
+
+
+/* Loop forever */
+ while (1)
+ {
+	//UARTSend((uint8_t *)"A\r\n\r\n", 5);
+
+	 LPC_USART->IER = IER_THRE | IER_RLS; /* Disable RBR */
+	 while ( !(LPC_UART->LSR & LSR_THRE) );
+	 LPC_USART->THR = "A";
+	 LPC_USART->IER = IER_THRE | IER_RLS | IER_RBR;/* Re-enable RBR
+
+	UARTSend((uint8_t *)"AT\r\n\r\n", 6);
+
+	if ( UARTCount != 0 )
+	{
+	  LPC_USART->IER = IER_THRE | IER_RLS;			// Disable RBR //
+	  UARTSend( (uint8_t *)UARTBuffer, UARTCount );
+	  printf("UARTBuffer: %s", UARTBuffer);
+	  UARTCount = 0;
+	  LPC_USART->IER = IER_THRE | IER_RLS | IER_RBR;	// Re-enable RBR //
+	}
+ */
+  }
+
+}
+

@@ -1,0 +1,556 @@
+/*
+===============================================================================
+ Name        : main.c
+ Author      : $Markkula
+ Version     : 1.0
+ Copyright   : $(Markkula
+ Description : main c function
+===============================================================================
+*/
+
+#include "LPC11Uxx.h"                        /* LPC11Uxx definitions */
+#include "gpio.h"
+#include "timer32.h"
+
+#include <stdio.h>
+#include <math.h>
+
+#include "ledSetup.h"
+#include "accelerometer.h"
+
+/* Main Program */
+int main (void) {
+
+	  SystemCoreClockUpdate();
+
+	  /*Initialisoidaan I2C väylä*/
+	  I2CInit();
+	  _delay_ms(100);
+	  /*Initialisoidaan I/O portit*/
+	  setLedPinsOutput();
+	  _delay_ms(100);
+	  /*Funktio jossa asetetaan raja-arvot liikkeen hidastumisen tuovalle kiihtyvyydelle
+	   * eli mitä enemmän liikkeen hidastumisen aiheuttavaa kiihtyvyyttä sitä enemmän ledejä
+	   * sytytetään*/
+	  initializeBrakePowerArray();
+	  _delay_ms(100);
+
+	  /*Kiihtyvyysanturin mittausväli +-2g*/
+	  /*Kytketään kiihtyvyysanturi päälle ja valitaan ODR = 6.66 kHz (high performance)*/
+	  sendData(CTRL1_XL, 0xA0);
+	  /*Kulmanopeusanturin mittausväli +-2000dps*/
+	  /*Kytketään kulmanopeusanturi päälle ja valitaan ODR= 104 Hz (high performance)*/
+	  sendData(CTRL2_G, 0x4C);
+	  /*Kytketään INT1_CTRL rekisteristä päälle interrupt kiihtyvyys - ja kulmanopeusanturia varten
+	   *joka triggeröityy kun uusi data on luettavissa anturilta. */
+	  sendData(INT1_CTRL, 0x03);
+	  /*Kytketään Datan esto päälle eli uutta dataa päivitetä rekistereihin ennen kuin vanha
+	   * on luettu*/
+	  sendData(CTRL3_C, 0x40);
+
+	  _delay_ms(200);
+
+	  /*Muuttujat kiihtyvyys- ja kulmanopeusanturin interrupteja varten eli
+	   * kun uusi data on luettavissa*/
+	  unsigned char accDataCheck;
+	  unsigned char gyroDataCheck;
+
+
+	  /*Taulukot joihin tallennetaan MSB ja LSB kiihtyvyysanturin akseleilta*/
+	  unsigned char xAxisAccelerometerData[2];
+	  unsigned char yAxisAccelerometerData[2];
+	  unsigned char zAxisAccelerometerData[2];
+
+	  /*Taulukot joihin tallennetaan MSB ja LSB kulmanopeusanturin akseleilta*/
+	  unsigned char xAxisGyroscopeData[2];
+	  unsigned char yAxisGyroscopeData[2];
+	  unsigned char zAxisGyroscopeData[2];
+
+	  /*Muuttujat johon hetkellisesti tallennetaan 16bit raakadata joka on luettu sensorilta*/
+	  short xOut16bit_g, yOut16bit_g, zOut16bit_g, xOut16bit_dps, yOut16bit_dps, zOut16bit_dps;
+
+	  /*Muuttujat jotka sisältävät jokaisen akselin niin kiihtyvyys- kuin kulmanopeusarvot.*/
+	  float xOut_g, yOut_g, zOut_g, xOut_dps, yOut_dps, zOut_dps;
+	  //float prevXOut_g, prevYOut_g;
+
+	  /*Kulmanopeusanturin mittaamat arvot kokonaislukuna*/
+	  int xDps = 0, yDps = 0, zDps = 0;
+
+	  /*Kalibrointia varten tarvittavat muuttujat*/
+	  float xOff_dps = 0, yOff_dps = 0, zOff_dps = 0;
+	  float xOff_g = 0, yOff_g = 0, zOff_g = 0;
+	  float accelerationOffSet = 0;
+
+	  /*Counter muuttujat joita käytetään, kun kalibroidaan kiihtyvyys- ja kulmanopeusanturit*/
+	  int accDataCheckCounter = 0, gyroDataCheckCounter = 0;
+
+	  /*Flag muuttuja joka triggeröityy, jos käydään jonkin akselin kulmanopeuden raja-arvo ylittyy */
+	  static int flag = 0;
+
+	  /*Muuttuja johon tallenetaan kokonaiskiihtyvyys kolmen vektorin osalta
+	   * Toinen muuttuja pitää sisällään edellisen kokonaiskiihtyvyyden arvon*/
+	  volatile float acceleration = 0, prevAcceleration = 0;
+
+	  /*Muuttuja joka triggeröityy '1', jos mitattu kiihtyvyys edelliseen on liian suuri*/
+	  int bumpOccured = 0;
+	  /*Laskurimuuttujat joiden arvoja kasvatetaan, jos laite on jatkuvassa kiihtyvyyden muutoksessa
+	   * (vauhdin hidastuminen) */
+	  static int counter = 0, counter1 = 0, counter2 = 0;
+
+	  /*Muuttuja jonka arvoksi annetaan 1, jos laite on jatkuvassa kiihtyvyyden muutoksessa
+	   * (vauhdin hidastuminen)*/
+	  int decelerationInProgress = 0;
+
+	  /*Keskiarvo -muuttuja, jonka perusteella silmukkaa käydään läpi muuttujan arvon verran.
+	   *Silmukassa lasketaan keskiarvoa kokonaiskiihtyvyydelle. Silmukan jälkeen arvo
+	   *jaetaan silmukan kieroksien määrällä ja tämän jälkeen vähennetään maanvetovoima 1g.
+	   *Maanvetovoiman jälkeen mitatusta arvosta vähennetään/lisätään vielä kalibroinnin antama arvo
+	   */
+	  int average = 22;
+
+	  /*Annetaan jatkuvalle kiihtyvyyden muutokselle sallia mennä yhden kerran thresholdin alapuolelle*/
+	  int exception1 = 0, exception2 = 0;
+
+
+
+	  /*Raja-arvo jonka yli kokonaiskiihtyvyys ei saa mennä edelliseen mitattuun arvoon verrattuna*/
+	  float triggerLevel = 0.6;
+	  /*Raja-arvo kulmanopeusanturin eri akseleille*/
+	  int dpsLvl = 20;
+
+/*Kiihtyvyysanturin kalibrointi*/
+while(accDataCheckCounter < 200){
+
+	  		  accDataCheck = readStatusRegisterAcc(accDataCheck);
+
+	  		  if(accDataCheck){
+
+	  			  //Luetaan kiihtyvyys X-akselilta
+	  			  xAxisAccelerometer(xAxisAccelerometerData);
+
+	  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+	  			  xOut16bit_g = ((short)(xAxisAccelerometerData[0] << 8 | xAxisAccelerometerData[1]));
+	  			  //Muutetaan arvo todelliseen arvoon eli g-voimiksi
+	  			  //(+-2g) datalehden sivu 23, Taulukko 3)
+	  			  xOff_g = ((float) xOut16bit_g * 0.000061);
+
+	  			  //Luetaan kiihtyvyys Y-akselilta
+	  			  yAxisAccelerometer(yAxisAccelerometerData);
+
+	  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+	  			  yOut16bit_g = ((short)(yAxisAccelerometerData[0] << 8 | yAxisAccelerometerData[1]));
+	  			  //Muutetaan arvo todelliseen arvoon eli g-voimiksi
+	  			  //(+-2g) datalehden sivu 23, Taulukko 3)
+	  			  yOff_g = ((float) yOut16bit_g * 0.000061);
+
+	  			  //Luetaan kiihtyvyys Z-akselilta
+	  			  zAxisAccelerometer(zAxisAccelerometerData);
+
+	  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+	  			  zOut16bit_g = ((short)(zAxisAccelerometerData[0] << 8 | zAxisAccelerometerData[1]));
+	  			  //Muutetaan arvo todelliseen arvoon eli g-voimiksi
+	  			  //(+-2g) datalehden sivu 23, Taulukko 3)
+	  			  zOff_g = ((float) zOut16bit_g * 0.000061);
+
+	  			  /*Lasketaan kokonaiskiihtyvyys joka saadaan ko. kaavalla*/
+			      accelerationOffSet += sqrt((xOff_g * xOff_g) + (yOff_g * yOff_g) + (zOff_g * zOff_g));
+
+			      /*Lisätään laskurin arvoa yhdellä, arvon ollessa 200 poistutaan silmukasta*/
+	  			  accDataCheckCounter += 1;
+
+	  		  }
+
+}
+
+
+/*Kulmanopeusanturin kalibrointi*/
+while(gyroDataCheckCounter < 500){
+
+			  /*Luetaan kulmanopeus X-akselin osalta*/
+			  xAxisGyroscope(xAxisGyroscopeData);
+
+  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+			  xOut16bit_dps = ((short)(xAxisGyroscopeData[0] << 8 | xAxisGyroscopeData[1]));
+  			  //Muutetaan arvo todelliseen arvoon eli DPS (degrees per second)
+  			  //(+-2000dps) datalehden sivu 23, Taulukko 3)
+			  xOff_dps += ((float) xOut16bit_dps * 0.07);
+
+			  /*Luetaan kulmanopeus Y-akselin osalta*/
+			  yAxisGyroscope(yAxisGyroscopeData);
+
+  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+			  yOut16bit_dps = ((short)(yAxisGyroscopeData[0] << 8 | yAxisGyroscopeData[1]));
+  			  //Muutetaan arvo todelliseen arvoon eli DPS (degrees per second)
+  			  //(+-2000dps) datalehden sivu 23, Taulukko 3)
+			  yOff_dps += ((float) yOut16bit_dps * 0.07);
+
+			  /*Luetaankulmanopeus Z-akselin osalta*/
+			  zAxisGyroscope(zAxisGyroscopeData);
+
+  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+			  zOut16bit_dps = ((short)(zAxisGyroscopeData[0] << 8 | zAxisGyroscopeData[1]));
+  			  //Muutetaan arvo todelliseen arvoon eli DPS (degrees per second)
+  			  //(+-2000dps) datalehden sivu 23, Taulukko 3)
+			  zOff_dps += ((float) zOut16bit_dps * 0.07);
+
+		      /*Lisätään laskurin arvoa yhdellä, arvon ollessa 500 poistutaan silmukasta*/
+			  gyroDataCheckCounter += 1;
+}
+
+      /*Jaetaan lasketut arvot kalibrointisilmukan kierroksien määrällä*/
+	  xOff_dps /= 500;
+	  yOff_dps /= 500;
+	  zOff_dps /= 500;
+
+
+      /*Jaetaan laskettu arvo kokonaiskiihtyvyyden kalibrointiarvolle kierroksien määrällä*/
+	  accelerationOffSet /= 200;
+	  /*Vähennetään kalibrointiarvosta maanvetovoima eli 1g*/
+	  accelerationOffSet -= 1;
+
+	  /*Sytytetään kaikki ledit, jolla indikoidaan että kalibrointi on valmis
+	   *Sytyttämistä seuraa ledien sammutus*/
+	  turnLedsOnAfterCalibration();
+	  turnLedsOff();
+
+
+while(1)
+{
+
+	  /*Muuttuja kokonaiskiihtyvyyden laskemiseksi*/
+	  acceleration = 0;
+
+	  /*Tarkastetaan onko uutta dataa luettavissa, lukemalla kulmanopeusanturin rekisteristä
+	   * onko tietty bitti 1/0 */
+	  gyroDataCheck = readStatusRegisterGyro(gyroDataCheck);
+
+	  	  /*Luetaan dataa kulmanopeusanturilta dataa, jos uutta dataa on luettavissa*/
+	  	  if(gyroDataCheck){
+
+			  /*Luetaan kulmanopeus X-akselin osalta*/
+	  		  xAxisGyroscope(xAxisGyroscopeData);
+  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+	  		  xOut16bit_dps = ((short)(xAxisGyroscopeData[0] << 8 | xAxisGyroscopeData[1]));
+  			  //Muutetaan arvo todelliseen arvoon eli DPS (degrees per second)
+  			  //(+-2000dps) datalehden sivu 23, Taulukko 3)
+			  xOut_dps = ((float) xOut16bit_dps * 0.07);
+		  	  /*Vähennetään mitatusta arvosta kalibroinnin antama arvo*/
+			  xDps = (int)(xOut_dps - xOff_dps);
+
+			  /*******************************************************************************************/
+
+			  /*Luetaan kulmanopeus Y-akselin osalta*/
+			  yAxisGyroscope(yAxisGyroscopeData);
+  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+			  yOut16bit_dps = ((short)(yAxisGyroscopeData[0] << 8 | yAxisGyroscopeData[1]));
+  			  //Muutetaan arvo todelliseen arvoon eli DPS (degrees per second)
+  			  //(+-2000dps) datalehden sivu 23, Taulukko 3)
+			  yOut_dps = ((float) yOut16bit_dps * 0.07);
+		  	  /*Vähennetään mitatusta arvosta kalibroinnin antama arvo*/
+			  yDps = (int)(yOut_dps - yOff_dps);
+
+			  /*******************************************************************************************/
+
+			  /*Luetaan kulmanopeus Z-akselin osalta*/
+			  zAxisGyroscope(zAxisGyroscopeData);
+  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+ 			  zOut16bit_dps = ((short)(zAxisGyroscopeData[0] << 8 | zAxisGyroscopeData[1]));
+  			  //Muutetaan arvo todelliseen arvoon eli DPS (degrees per second)
+  			  //(+-2000dps) datalehden sivu 23, Taulukko 3)
+ 			  zOut_dps = ((float) zOut16bit_dps * 0.07);
+		  	  /*Vähennetään mitatusta arvosta kalibroinnin antama arvo*/
+  			  zDps = (int)(zOut_dps - zOff_dps);
+
+
+	  	  }
+
+
+	  	  /*Tarkastetaan onko uutta dataa luettavissa, lukemalla kiihtyvyysanturin rekisteristä
+	  	  * onko tietty bitti 1/0 */
+	  	  accDataCheck = readStatusRegisterAcc(accDataCheck);
+
+		  /*Luetaan kiihtyvyysanturilta dataa, jos uutta dataa on luettavissa*/
+	  	  if(accDataCheck){
+
+	  		  /*Silmukka jossa lasketaan kokonaiskiihtyvyydelle keskiarvoa*/
+	  		  for(int i = 0; i < average; i++){
+
+	  			  /*******************************************************************************************/
+
+	  			  //Luetaan kiihtyvyys Y-akselilta
+	  			  yAxisAccelerometer(yAxisAccelerometerData);
+
+	  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+	  			  yOut16bit_g = ((short)(yAxisAccelerometerData[0] << 8 | yAxisAccelerometerData[1]));
+	  			  //Muutetaan arvo todelliseen arvoon eli g-voimiksi
+	  			  //(+-2g) datalehden sivu 23, Taulukko 3)
+	  			  yOut_g = ((float) yOut16bit_g * 0.000061);
+
+
+	  			  /*******************************************************************************************/
+
+	  			  //Luetaan kiihtyvyys Z-akselilta
+	  			  zAxisAccelerometer(zAxisAccelerometerData);
+
+	  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+	  			  zOut16bit_g = ((short)(zAxisAccelerometerData[0] << 8 | zAxisAccelerometerData[1]));
+	  			  //Muutetaan arvo todelliseen arvoon eli g-voimiksi
+	  			  //(+-2g) datalehden sivu 23, Taulukko 3)
+	  			  zOut_g = ((float) zOut16bit_g * 0.000061);
+
+	  			  /*******************************************************************************************/
+
+
+	  			  //Luetaan kiihtyvyys X-akselilta
+	  			  xAxisAccelerometer(xAxisAccelerometerData);
+	  			  //Muutetaan MSB ja LSB 16bittiseksi arvoksi
+	  			  xOut16bit_g = ((short)(xAxisAccelerometerData[0] << 8 | xAxisAccelerometerData[1]));
+	  			  //Muutetaan arvo todelliseen arvoon eli g-voimiksi
+	  			  //(+-2g) datalehden sivu 23, Taulukko 3)
+	  			  xOut_g = ((float) xOut16bit_g * 0.000061);
+
+
+	  			  acceleration += sqrt((xOut_g * xOut_g) + (yOut_g * yOut_g) + (zOut_g * zOut_g));
+
+	  		  }
+
+
+	  		  /*Jaetaan kiihtyvyys silmukan kierrosten määrällä, jotta saadaan keskiarvo*/
+	  		  acceleration /= average;
+	  		  /*Vähennetään maanvetovoima vakio 1g*/
+	  		  acceleration -= 1;
+
+	  		  /*Jos kiihtyyvden kalibrointi arvo on > 0 vähennetään se mitatusta arvosta
+	  		   * muuten lisätään mitattuun arvoon*/
+	  		  if(accelerationOffSet < 0.0){
+	  			  acceleration += accelerationOffSet;
+	  		  }
+	  		  else{
+	  			  acceleration -= accelerationOffSet;
+	  		  }
+
+	  		  /*Jos kiihtyvyys on < 0.0 (liikkeen listääntyminen) annetaan kokonaiskiihtyvyyden
+	  		   * arvoksi 0, koska ohjelman tulee ottaa vain huomioon liikkeen hidastuminen*/
+	  		  if(acceleration <= 0.0 && flag == 0){
+	  			  acceleration = 0;
+	  		  }
+
+	  		  /*Jos nykyisen mitatun kiihtyvyyden ja edellisen mitatun väli on suurempi kuin triggerLevel
+	  		   * muuttujaan on määritetty niin bumpOccured arvoksi annetaan 1, joka nollataan vasta,
+	  		   * kun kiihtyvyys laskee alle 0.01 (ledien sytyttämisen raja-arvo)*/
+	  		  if((fabs(acceleration - prevAcceleration) >= triggerLevel) && decelerationInProgress == 0){
+	  			  	  bumpOccured = 1;
+	  		  }
+
+
+	  		  /*Jos jokin kulmanopeuden mittaaman akselin mitattu arvo ylittää dpsLvl raja-arvon
+	  		   * triggeröidään flag muuttuja*/
+	  		  else if((xDps > dpsLvl || xDps < -dpsLvl || yDps > dpsLvl || yDps < -dpsLvl || zDps > dpsLvl || zDps < -dpsLvl) &&
+	  				decelerationInProgress == 0){
+	  			  flag = 1;
+	  		  }
+
+
+	  		  /*Jos nykyisen mitatun kiihtyvyyden ja edellisen mitatun väli on pienempi kuin triggerLevel ja
+	  		   * kulmanopeusanturin arvot ovat alle raja-arvon eli kulmanopeuden tuottama kiihtyvyys
+	  		   * ei aiheuta valheellista kiihtyvyyttä ja kokonaiskiihtyvyyden arvo on yli 0.05 niin lisätään countteriin +1,
+	  		   * edellettäen että laite ei ole vielä jatkuvassa kiihtyvyyden muutoksessa.
+	  		   * jos counterin arvo tulee yhtäsuureksi kuin 3 on laite
+	  		   * jatkuvassa kiihtyvyyden muutoksessa (hidastuminen).*/
+	  		  else if(xDps < 7 && xDps > -7 && yDps < 6 && yDps > -6 && zDps < 7 && zDps > -7 &&
+	  				  fabs(acceleration - prevAcceleration) < triggerLevel &&
+	  				  acceleration >= 0.05 &&
+					  bumpOccured == 0 &&
+					  decelerationInProgress == 0 &&
+					  flag == 0){
+
+	  			  	 /*Tallennettaan nykyinen kokonaiskiihtyvyys, jota ensi kieroksella verrataan
+	  			  	  * uuteen mitattuun arvoon*/
+	 	  			 prevAcceleration = acceleration;
+	 	  			 /*Laskurin arvoa kasvatetaan yhdellä*/
+	 	  			 counter += 1;
+
+	  		  }
+
+	  		  /*Jos kumpikaan edellä mainituista ehdoista ei pidä paikkaansa niin resetoidaan
+	  		   * laskuri muuttujan arvo*/
+	  		  else{
+	  			  counter = 0;
+	  		  }
+
+	  		  /*Jos kiihtyvyyden arvo on yli 0.025 ja mikään trigger muuttuja ei ole triggeröitynyt
+	  		   * niin lisätään counter1 muuttujan arvoa yhdellä*/
+	  		  if(xDps < 7 && xDps > -7 && yDps < 6 && yDps > -6 && zDps < 7 && zDps > -7 &&
+	  				fabs(acceleration - prevAcceleration) < triggerLevel &&
+					acceleration >= 0.025 &&
+					bumpOccured == 0 &&
+					decelerationInProgress == 0 &&
+					flag == 0){
+
+	  					/*Tallennettaan nykyinen kokonaiskiihtyvyys, jota ensi kieroksella verrataan
+	  					 * uuteen mitattuun arvoon*/
+	  					prevAcceleration = acceleration;
+	  					/*Laskurin arvoa kasvatetaan yhdellä*/
+	  					counter1 += 1;
+
+	  		 }
+
+	  		 /*Jos edellä oleva ehto ei pidä paikkaansa annetaan exception -muuttujan arvoksi
+	  		  * 1, jos ei olla vielä käyty else ehdossa, toisella kerralla resetoidaan laskurin
+	  		  * arvoksi 0*/
+	  		 else{
+
+	  			  if(!exception1){
+	  				  exception1 = 1;
+	  			  }
+	  			  else{
+	  				  exception1 = 0;
+	  				  counter1 = 0;
+
+	  			  }
+
+	  		 }
+
+
+	  		/*Jos kiihtyvyyden arvo on yli 0.01 ja mikään trigger muuttuja ei ole triggeröitynyt
+	  		 * niin lisätään counter1 muuttujan arvoa yhdellä*/
+	  		if(xDps < 7 && xDps > -7 && yDps < 6 && yDps > -6 && zDps < 7 && zDps > -7 &&
+	  				fabs(acceleration - prevAcceleration) < triggerLevel &&
+					acceleration >= 0.01 &&
+					bumpOccured == 0 &&
+					decelerationInProgress == 0 &&
+					flag == 0){
+
+						/*Tallennettaan nykyinen kokonaiskiihtyvyys, jota ensi kieroksella verrataan
+						 * uuteen mitattuun arvoon*/
+						prevAcceleration = acceleration;
+						/*Laskurin arvoa kasvatetaan yhdellä*/
+						counter2 += 1;
+
+	  		}
+
+
+	  		 /*Ehto jos tutkitaan triggermuuttujien arvoja ja resetoidaan niitä tiettyjen
+	  		  * ehtojen täyttyessä
+	  		  *
+	  		  * Triggermuuttujat resetoidaan ainoastaan, jos nykyinen laskettu kiihtyvyyden
+	  		  * arvo on alle ledin sytyttämisen raja-arvon.*/
+	  		 else{
+
+	  			  if(bumpOccured == 1 && acceleration < 0.01){
+	  				  bumpOccured = 0;
+	  			  }
+
+	  			  if(flag == 1 && acceleration < 0.01){
+	  				  flag = 0;
+	  			  }
+
+	  			  if(!exception2){
+	  				  exception2 = 1;
+	  			  }
+	  			  else{
+	  				  exception2 = 0;
+	  				  counter2 = 0;
+
+	  			  }
+
+	  			  /*Ainoastaan decelerationInProgress arvon ollessa 0 eli ei olla jatkuvassa kiihtyvyyden muutoksessa*/
+	  			  if(decelerationInProgress == 0){
+	  				  prevAcceleration = acceleration;
+	  			  }
+
+	  		 }
+
+	  		  /*******************************************************************************************/
+
+	  		  /* Jos counter arvo on == 3 tai counterin arvo on käynyt jossain vaiheessa väh.
+	  		   * kolmessa eli decelerationInProgress == 1 niin mennään sytyttämään ledejä ehtona, että
+	  		   * bumpOccured != 1 eli ei ole tärähdetty isolla voimalla*/
+	  		  if(counter >= 3 || counter1 >= 5 || counter2 >= 10 || decelerationInProgress == 1){
+
+  			  	  decelerationInProgress = 1;
+
+  			  	  /*Jos edellinen mitattu kiihtyvyys on isompi kuin nykyinen sytytetään ledit
+  			  	   * edellisen mitatun kiihtyvyyden mukaan josta vähennetään 0.05 eli ensi kerralla
+  			  	   * kun tullaan taas ko. ehtoon niin sytytetään vähemmän ledejä*/
+	  			  if(prevAcceleration > acceleration){
+	  				  turnLedsOn(prevAcceleration);
+		  			  prevAcceleration -= 0.02;
+	  			  }
+
+	  			  /*Jos nykyinen mitattu kiihtyvyys on isompi kuin edellinen mitattu sytytetään
+	  			   * ledit nykyisen mitatun kiihtyvyyden mukaan*/
+	  			  else
+	  			  {
+	  				  turnLedsOn(acceleration);
+	  				  prevAcceleration = acceleration;
+
+	  			  }
+	  			  _delay_ms(140);
+
+	  			  /*Tulostetaan kaksi edellistä mitattua arvoa, ennen kuin counter
+	  			   * on saanut arvon 3*/
+
+	  			  /*
+	  			  if(!flag){
+	  				  for(int i = 0; i < 3; i++){
+	  					   Kommentoidut on niin, että näyttää isoimman ja jatketaan siitä
+	  						  if(prevAccValues[i] > prevAcceleration){
+	  							  prevAcceleration = prevAccValues[i];
+	  						  }
+
+	  					  turnLedsOn(prevAccValues[i]);
+	  					  _delay_ms(100);
+
+	  					  }
+	  					  //turnLedsOn(prevAcceleration);
+	  					  //_delay_ms(170);
+	  				  flag = 1;
+	  			  }
+
+	  			  */
+
+	  			  /*Jos edellinen mitattu kiihtyvyys on alle 0.05 eli alle ledien sytyttämisen
+	  			   * thresholdin, niin resetoidaan muuttujien arvo eli ei liike ei enää hidastu
+	  			   * ja sammutetaan ledit*/
+	  			  if(prevAcceleration < 0.01){
+
+	  				  prevAcceleration = 0.0;
+	  			  	  turnLedsOn(prevAcceleration);
+
+		  			  _delay_ms(140);
+	  			  	  decelerationInProgress = 0;
+	  			  	  //flag = 0;
+	  			  }
+	  		  }
+	  	  }
+
+
+	  	  /*KONSOLIIN TULOSTAMINEN - KÄYTETTY DEBUGGAUKSESSA*/
+
+	  	  //printf("Value of Acceleration: %f\n", acceleration);
+	  	  //printf("Value of prevAcceleration: %f\n", prevAcceleration);
+
+	  	  //printf("Counter: %d\n",counter);
+	  	  //printf("decelerationInProgress: %d\n",decelerationInProgress);
+
+
+	  	  //printf("bumpOccuredOnZAxis: %d\n", bumpOccuredOnZAxis);
+	  	  //printf("bumpOccured: %d\n", bumpOccured);
+	  	  //printf("Value of xOut_g: %f g\n", xOut_g);
+	  	  //printf("Value of yOut_g: %f g\n", yOut_g);
+	  	  //printf("Value of zOut_g: %f g\n", zOut_g);
+
+		  //printf("Angle of Pitch: %f  degree\n", pitch);
+		  //printf("Angle of Roll:  %f  degree\n", roll);
+
+		  //printf("Value of xAngle: %f degrees\n", xAngle);
+		  //printf("Value of yAngle: %f degrees\n", yAngle);
+
+	  	  //printf("Value of yDps: %d dps\n", yDps);
+		  //printf("Value of xDps: %d dps\n", xDps);
+		  //printf("Value of zDps: %d dps\n", zDps);
+
+	  }
+
+}

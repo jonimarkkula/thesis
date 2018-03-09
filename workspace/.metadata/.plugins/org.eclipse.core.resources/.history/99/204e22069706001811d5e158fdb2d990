@@ -1,0 +1,401 @@
+/*
+===============================================================================
+ Name        : opinnaytetyo.c
+ Author      : $Planea Oy
+ Version     :
+ Copyright   : $(copyright)
+ Description : main c function
+===============================================================================
+*/
+#include "LPC11Uxx.h"                        /* LPC11Uxx definitions */
+#include "gpio.h"
+#include "timer32.h"
+
+#include <stdio.h>
+#include <math.h>
+
+#include "ledSetup.h"
+#include "accelerometer.h"
+
+#define M_PI 3.14159265358979323846
+
+#define TEST_TIMER_NUM		1		/* 0 or 1 for 32-bit timers only */
+
+extern volatile uint32_t timer32_1_counter[4];
+
+float dt = 0.008; //Average - MEASURE THIS WHEN READY
+uint32_t elapsed;
+
+/* Main Program */
+int main (void) {
+
+	  SystemCoreClockUpdate();
+
+	  /* TEST_TIMER_NUM is either 0 or 1 for 32-bit timer 0 or 1. */
+	  init_timer32(TEST_TIMER_NUM, TIME_INTERVAL);
+	  enable_timer32(TEST_TIMER_NUM);
+
+	  /* Enable AHB clock to the GPIO domain. */
+	  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<6);
+
+
+	  /*GPIO AND I2C Initialization*/
+	  I2CInit();
+	  _delay_ms(200);
+	  setLedPinsOutput();
+	  _delay_ms(200);
+	  initializeBrakePowerArray();
+	  _delay_ms(100);
+
+	  /*Arrays for check if there is new data available on Status Register*/
+	  unsigned char accDataCheck;
+	  unsigned char gyroDataCheck;
+
+	  /*Arrays for storing MSB and LSB of the accelerometer axis data*/
+	  unsigned char xAxisAccelerometerData[2];
+	  unsigned char yAxisAccelerometerData[2];
+	  unsigned char zAxisAccelerometerData[2];
+	  float rawAccValues[3];
+	  float totalAcc[3];
+
+	  /*Arrays for storing MSB and LSB of the gyroscope axis data*/
+	  unsigned char xAxisGyroscopeData[2];
+	  unsigned char yAxisGyroscopeData[2];
+	  unsigned char zAxisGyroscopeData[2];
+
+      /*Variables where to temporarily store 16bit raw data from sensor*/
+	  short xOut16bit_g, yOut16bit_g, zOut16bit_g, xOut16bit_dps, yOut16bit_dps, zOut16bit_dps;
+
+	  /*Final data value*/
+	  float xOut_g, yOut_g, zOut_g, xOut_dps, yOut_dps, zOut_dps;
+
+	  /*DPS for gyroscope in int*/
+	  int xDps = 0, yDps = 0, zDps = 0;
+
+	  /*+-2g*/
+	  /*Turn on Accelerometer and select ODR=+416Hz (High performance)*/
+	  sendData(CTRL1_XL, 0x70);
+	  /*+-2g*/
+	  /*Turn on Gyroscope and select ODR=104Hz (High performance)*/
+	  sendData(CTRL2_G, 0x5C);
+	  /*Acc data-ready && Gyro data-ready interrupt on INT1*/
+	  sendData(INT1_CTRL, 0x03);
+	  /*Turn on Block Data Update*/
+
+	  sendData(CTRL3_C, 0x40);
+
+	  _delay_ms(200);
+
+	  /*Offset variables*/
+	  float xOff_dps = 0, yOff_dps = 0, zOff_dps = 0, xOff_g=0, yOff_g=0, zOff_g=0, accelerationOffSet = 0;
+
+	  /*Angles for pitch and Pitch and Roll from accelerometer*/
+	  float pitch = 0, roll = 0;
+
+	  /*Angles for gyroscope*/
+	  float yAngle = 0;
+
+	  /*DPS for gyroscope according to time*/
+	  float yDpsDt = 0;
+
+	  _delay_ms(100);
+
+	  int accDataCheckCounter = 0;
+
+	  for(int i = 0; i < 1000; i++){
+
+
+		 /*Read angular from Y -axis*/
+
+		 zAxisGyroscope(zAxisGyroscopeData);
+
+		 //Turn the MSB and LSB into a signed 16-bit value
+		 zOut16bit_dps = ((short)zAxisGyroscopeData[0] << 8) | zAxisGyroscopeData[1];
+		 zOff_dps += ((float) zOut16bit_dps * 0.07); // (+-250dps)datasheet page 23, Table 3) / 1000 because m (millis)
+
+
+		 /*Read angular from Y -axis*/
+
+		 yAxisGyroscope(yAxisGyroscopeData);
+
+		 //Turn the MSB and LSB into a signed 16-bit value
+		 yOut16bit_dps = ((short)yAxisGyroscopeData[0] << 8) | yAxisGyroscopeData[1];
+		 yOff_dps += ((float) yOut16bit_dps * 0.07); // (+-250dps)datasheet page 23, Table 3) / 1000 because m (millis)
+
+		 /*Read angular from X -axis*/
+		 xAxisGyroscope(xAxisGyroscopeData);
+
+		 //Turn the MSB and LSB into a signed 16-bit value
+		 xOut16bit_dps = ((short)xAxisGyroscopeData[0] << 8) | xAxisGyroscopeData[1];
+		 xOff_dps += ((float) xOut16bit_dps * 0.07); // (+-250dps)datasheet page 23, Table 3) / 1000 because m (millis)
+
+	  }
+
+	  do{
+
+		  	  /*READ ACCELEROMETER DATA*/
+		  	  accDataCheck = readStatusRegisterAcc(accDataCheck);
+
+		  	  if(accDataCheck){
+
+
+		  		if(accDataCheckCounter < 1000){
+
+					/*Read acceleration from X -axis*/
+					xAxisAccelerometer(xAxisAccelerometerData);
+
+					//Turn the MSB and LSB into a signed 16-bit value
+					xOut16bit_g = ((short)xAxisAccelerometerData[0] << 8) | xAxisAccelerometerData[1];
+					xOff_g += ((float) xOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+					/*******************************************************************************************/
+
+					/*Read acceleration from Y -axis*/
+					yAxisAccelerometer(yAxisAccelerometerData);
+
+					//Turn the MSB and LSB into a signed 16-bit value
+					yOut16bit_g = ((short)yAxisAccelerometerData[0] << 8) | yAxisAccelerometerData[1];
+					yOff_g += ((float) yOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+					/*******************************************************************************************/
+
+					/*Read acceleration from Z -axis*/
+					zAxisAccelerometer(zAxisAccelerometerData);
+
+					//Turn the MSB and LSB into a signed 16-bit value
+					zOut16bit_g = ((short)zAxisAccelerometerData[0] << 8) | zAxisAccelerometerData[1];
+					zOff_g += ((float) zOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+
+					/*******************************************************************************************/
+
+					//accelerationOffSet += sqrt((xOut_g * xOut_g) + (zOut_g * zOut_g));
+					//accelerationOffSet -= 1.0;
+					accDataCheckCounter += 1;
+
+					}
+
+		  		}
+
+	 }while(accDataCheckCounter != 1000);
+
+      /*Get average offset for gyro*/
+	  xOff_dps /= 1000;
+	  yOff_dps /= 1000;
+	  zOff_dps /= 1000;
+
+	  /*Get average offset for accelerometer*/
+	  xOff_g /= 1000;
+	  yOff_g /= 1000;
+	  zOff_g /= 1000;
+
+	  accelerationOffSet /= 1000;
+	  //printf("Value of accelerationOffSet: %f g\n", accelerationOffSet);
+
+
+	  //printf("Value of xOff_g: %f g\n", xOff_g);
+	  //printf("Value of yOff_g: %f g\n", yOff_g);
+	  //printf("Value of zOff_g: %f g\n", zOff_g);
+	  //printf("Value of xOff_dps: %f g\n", xOff_dps);
+	  //printf("Value of yOff_dps: %f g\n", yOff_dps);
+	  //printf("Value of zOff_dps: %f g\n", zOff_dps);
+
+
+	  turnLedsOnAfterCalibration();
+	  turnLedsOff();
+
+	  volatile float acceleration = 0;
+	  float gyroscopeTotal  = 0;
+
+while(1)
+{
+
+#if TEST_TIMER_NUM
+
+	  //timer32_1_counter[0] = 0;
+
+	  acceleration = 0;
+	  //gyroscopeTotal = 0;
+	  //XZacceleration = 0;
+
+	  /*READ ACCELEROMETER DATA*/
+	  accDataCheck = readStatusRegisterAcc(accDataCheck);
+
+	  if(accDataCheck){
+
+			  /*Calculate mean of acceleration*/
+			  //for(int i = 0; i <10; i++){
+
+				 	  /*Read acceleration from X -axis*/
+				      xAxisAccelerometer(xAxisAccelerometerData);
+
+				  	  //Turn the MSB and LSB into a signed 16-bit value
+				  	  xOut16bit_g = ((short)xAxisAccelerometerData[0] << 8) | xAxisAccelerometerData[1];
+				  	  xOut_g = ((float) xOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+				  	  float temp = xOff_g;
+				  	  /*Subtract this from measured value*/
+				  	  if (xOff_g > 1){
+
+				  		  temp -= -1.0;
+				  		  xOut_g -= temp;
+
+				  	  }
+
+				  	  /*Add this to measured value*/
+				  	  else if (xOff_g < 1 && xOff_g > 0.0){
+
+				  		  temp = (1.0-temp);
+				  		  xOut_g += temp;
+				  	  }
+
+
+				  	  /*Subtract, ex. -1.0213 - (-0.0213) this to measured value*/
+
+				  	  else if (xOff_g < -1){
+
+				  		  temp += 1.0;
+				  		  xOut_g -= temp;
+				  	  }
+
+				  	  /*Subtract this to measured value = subtract it ex. xOff_g = -0.956 = xOff_g = 0.44 so we need to subract that from
+		     		   * measured value to it to -1g*/
+				  	  else if (xOff_g > -1 && xOff_g < 0.0){
+
+				  		  temp = (1.0+temp);
+				  		  xOut_g -= temp;
+				  	  }
+
+	  				  /*******************************************************************************************/
+     				  /*Read acceleration from Y -axis*/
+	 				  yAxisAccelerometer(yAxisAccelerometerData);
+
+	 				  //Turn the MSB and LSB into a signed 16-bit value
+	  				  yOut16bit_g = ((short)yAxisAccelerometerData[0] << 8) | yAxisAccelerometerData[1];
+	  				  yOut_g = ((float) yOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+	  				  if(yOff_g <= 0){
+	  					  yOut_g += fabsf(yOff_g);
+	  				  }
+	  				  else{
+	  					  yOut_g -= yOff_g;
+	  				  }
+
+
+     				  /*******************************************************************************************/
+
+	  				  /*Read acceleration from Z -axis*/
+	  				  zAxisAccelerometer(zAxisAccelerometerData);
+
+	     			  //Turn the MSB and LSB into a signed 16-bit value
+		     		  zOut16bit_g = ((short)zAxisAccelerometerData[0] << 8) | zAxisAccelerometerData[1];
+			    	  zOut_g = ((float) zOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+				      if(zOff_g <= 0){
+				    	  zOut_g += fabsf(zOff_g);
+				  	  }
+				  	  else{
+				  		  zOut_g -= zOff_g;
+				  	  }
+
+
+
+				      /*******************************************************************************************/
+
+				      //acceleration += sqrt(fabsf(1.00 - (xOut_g * xOut_g) - (zOut_g * zOut_g) - (yOut_g * yOut_g)));
+
+
+
+
+				      rawAccValues[0] = (xOut_g);
+				      rawAccValues[1] = (yOut_g);
+				      rawAccValues[2] = (zOut_g);
+
+				      correct_for_gravity(rawAccValues, totalAcc);
+				      acceleration = sqrt(totalAcc[0]*totalAcc[0] + totalAcc[1]*totalAcc[1] + totalAcc[2] * totalAcc[2]);
+
+
+
+
+			  //acceleration /= 10;
+			  printf("acceleration %f\n", acceleration);
+
+	  }
+
+
+
+
+
+	  /*READ GYROSENSOR DATA*/
+	  gyroDataCheck = readStatusRegisterGyro(gyroDataCheck);
+
+	  	  if(gyroDataCheck){
+
+	  		  /*Read angular from X -axis*/
+	  		  xAxisGyroscope(xAxisGyroscopeData);
+
+	  		  //Turn the MSB and LSB into a signed 16-bit value
+	  		  xOut16bit_dps = ((short)xAxisGyroscopeData[0] << 8) | xAxisGyroscopeData[1];
+			  xOut_dps = ((float) xOut16bit_dps * 0.07); // (+-250dps)datasheet page 23, Table 3) / 1000 because m (millis)
+			  xOut_dps = (xOut_dps - xOff_dps);
+
+
+			  /*******************************************************************************************/
+
+			  /*Read angular from Z -axis*/
+
+			  //zAxisGyroscope(zAxisGyroscopeData);
+ 			  //Turn the MSB and LSB into a signed 16-bit value
+ 			  //zOut16bit_dps = ((short)zAxisGyroscopeData[0] << 8) | zAxisGyroscopeData[1];
+ 			  //zOut_dps = ((float) zOut16bit_dps * 0.07); // (+-250dps)datasheet page 23, Table 3) / 1000 because m (millis)
+  			  //zOut_dps = (zOut_dps - zOff_dps);
+
+
+
+			  /*******************************************************************************************/
+
+			  /*Read angular from X -axis*/
+
+			  //yAxisGyroscope(yAxisGyroscopeData);
+
+			  //Turn the MSB and LSB into a signed 16-bit value
+			  //yOut16bit_dps = ((short)yAxisGyroscopeData[0] << 8) | yAxisGyroscopeData[1];
+			  //yOut_dps = ((float) yOut16bit_dps * 0.07); // (+-250dps)datasheet page 23, Table 3) / 1000 because m (millis)
+			  //yOut_dps = (yOut_dps - yOff_dps);
+
+
+
+			  if(xDps < 12 && xDps > -12)
+			  	  turnLedsOn(acceleration);
+			  else
+				  turnLedsOff();
+	  	  }
+
+
+		  //printf("Value of acceleration: %f\n", acceleration);
+
+	  	  //printf("Value of xOut_g: %f g\n", xOut_g);
+	  	  //printf("Value of yOut_g: %f g\n", yOut_g);
+	  	  //printf("Value of zOut_g: %f g\n", zOut_g);
+
+		  //printf("Angle of Pitch: %f  degree\n", pitch);
+		  //printf("Angle of Roll:  %f  degree\n", roll);
+
+		  //printf("Value of xAngle: %f degrees\n", xAngle);
+		  //printf("Value of yAngle: %f degrees\n", yAngle);
+
+		  //printf("Value of yDps: %f dps\n", yOut_dps);
+		  //printf("Value of xDps: %f dps\n", xOut_dps);
+		  //printf("Value of zDps: %f dps\n", zOut_dps);
+
+
+	      //elapsed  = timer32_1_counter[0];
+	  	  //dt = (float)elapsed / 1000;
+	  	  //printf("Elapsed time: %f\n", dt);
+
+#endif
+
+	  }
+
+}
+

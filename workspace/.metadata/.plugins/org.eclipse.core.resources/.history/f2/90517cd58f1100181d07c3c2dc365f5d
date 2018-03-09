@@ -1,0 +1,511 @@
+/*
+===============================================================================
+ Name        : opinnaytetyo.c
+ Author      : $Planea Oy
+ Version     :
+ Copyright   : $(copyright)
+ Description : main c function
+===============================================================================
+*/
+#include "LPC11Uxx.h"                        /* LPC11Uxx definitions */
+#include "gpio.h"
+#include "timer32.h"
+
+#include <stdio.h>
+#include <math.h>
+
+#include "ledSetup.h"
+#include "accelerometer.h"
+
+#define M_PI 3.14159265358979323846
+
+#define TEST_TIMER_NUM		1		/* 0 or 1 for 32-bit timers only */
+
+extern volatile uint32_t timer32_1_counter[4];
+
+float dt = 0.007; //Average - MEASURE THIS WHEN READY
+uint32_t elapsed;
+
+/* Main Program */
+int main (void) {
+
+	  SystemCoreClockUpdate();
+
+	  /* TEST_TIMER_NUM is either 0 or 1 for 32-bit timer 0 or 1. */
+	  init_timer32(TEST_TIMER_NUM, TIME_INTERVAL);
+	  enable_timer32(TEST_TIMER_NUM);
+
+	  /* Enable AHB clock to the GPIO domain. */
+	  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<6);
+
+	  /*GPIO AND I2C Initialization*/
+	  I2CInit();
+	  _delay_ms(100);
+	  /*Set pins for I/O */
+	  setLedPinsOutput();
+	  _delay_ms(100);
+	  /*Funktio jossa asetetaan raja-arvot jarrutksen kiihtyvyydelle*/
+	  initializeBrakePowerArray();
+	  _delay_ms(100);
+
+	  /*+-2g*/
+	  /*Turn on Accelerometer and select ODR=+3,33KHz (High performance)*/
+	  sendData(CTRL1_XL, 0x90);
+	  /*+-2000dps*/
+	  /*Turn on Gyroscope and select ODR=208Hz (High performance)*/
+	  sendData(CTRL2_G, 0x4C);
+	  /*Acc data-ready && Gyro data-ready interrupt on INT1*/
+	  sendData(INT1_CTRL, 0x03);
+	  /*Turn on Block Data Update*/
+	  sendData(CTRL3_C, 0x40);
+
+	  _delay_ms(200);
+
+	  /*Arrays for check if there is new data available on Status Register*/
+	  unsigned char accDataCheck;
+	  unsigned char gyroDataCheck;
+
+	  /*Arrays for storing MSB and LSB of the accelerometer axis data*/
+	  unsigned char xAxisAccelerometerData[2];
+	  unsigned char yAxisAccelerometerData[2];
+	  unsigned char zAxisAccelerometerData[2];
+	  //float rawAccValues[3];
+	  //float totalAcc[3];
+
+	  /*Arrays for storing MSB and LSB of the gyroscope axis data*/
+	  unsigned char xAxisGyroscopeData[2];
+	  unsigned char yAxisGyroscopeData[2];
+	  unsigned char zAxisGyroscopeData[2];
+
+	  /*Variables where to temporarily store 16bit raw data from sensor*/
+	  short xOut16bit_g, yOut16bit_g, zOut16bit_g, xOut16bit_dps, yOut16bit_dps, zOut16bit_dps;
+
+	  /*Final data value*/
+	  float xOut_g, yOut_g, zOut_g, xOut_dps, yOut_dps, zOut_dps;
+
+	  /*DPS for gyroscope in int*/
+	  int xDps = 0, yDps = 0, zDps = 0;
+
+	  /*Offset variables*/
+	  float xOff_dps = 0, yOff_dps = 0, zOff_dps = 0, xOff_g=0, yOff_g=0, zOff_g=0;
+
+	  /*Angles for pitch and Pitch and Roll from accelerometer*/
+	  float pitch = 0, roll = 0;
+
+	  /*Angles for gyroscope*/
+	  float yAngle = 0;
+
+	  /*DPS for gyroscope according to time*/
+	  float yDpsDt = 0;
+
+	  int accDataCheckCounter = 0, gyroDataCheckCounter = 0;
+
+	  /*Total acceleration from 3 axis*/
+	  volatile float acceleration = 0, prevAcceleration = 0,
+	  prevXOut_g = 0, prevYOut_g = 0, prevZOut_g = 0;
+	  /*Variable to check if bump has been occured*/
+	  int bumpOccured = 0, bumpOccuredOnZAxis = 0;
+	  /*Counter to detect if we're currently braking*/
+	  static int counter = 0;
+	  /*Is Brake in Progress*/
+	  int brakeInProgress = 0;
+	  /*Average from acceleration*/
+	  int average = 20, totalRounds = 0;
+	  /*Trigger level for bump in total acceleration*/
+	  float triggerLevel = 0.30;
+	  /*Trigger level for angular acceleration from gyroscope readings*/
+	  int dpsLvl = 3;
+
+	  /*CALCULATE OFFSET VALUES FOR ALL AXIS ON ACCELEROMETER AND GYROSCOPE*/
+	  do{
+
+		  /*READ ACCELEROMETER DATA*/
+		  accDataCheck = readStatusRegisterAcc(accDataCheck);
+
+		  if(accDataCheck && accDataCheckCounter < 500){
+
+			  /*Read acceleration from X -axis*/
+			  xAxisAccelerometer(xAxisAccelerometerData);
+
+			  //Turn the MSB and LSB into a signed 16-bit value
+			  xOut16bit_g = ((short)(xAxisAccelerometerData[0] << 8 | xAxisAccelerometerData[1]));
+			  xOff_g += ((float) xOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+			  /*******************************************************************************************/
+
+			  /*Read acceleration from Y -axis*/
+			  yAxisAccelerometer(yAxisAccelerometerData);
+
+			  //Turn the MSB and LSB into a signed 16-bit value
+			  yOut16bit_g = ((short)(yAxisAccelerometerData[0] << 8 | yAxisAccelerometerData[1]));
+			  yOff_g += ((float) yOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+
+			  /*******************************************************************************************/
+
+			  /*Read acceleration from Z -axis*/
+			  zAxisAccelerometer(zAxisAccelerometerData);
+
+			  //Turn the MSB and LSB into a signed 16-bit value
+			  zOut16bit_g = ((short)(zAxisAccelerometerData[0] << 8 | zAxisAccelerometerData[1]));
+			  zOff_g += ((float) zOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+
+			  /*******************************************************************************************/
+
+			  //accelerationOffSet += sqrt((xOff_g * xOff_g) + (yOff_g * yOff_g) + (zOff_g * zOff_g));
+			  accDataCheckCounter += 1;
+
+		  }
+
+
+		  if(gyroDataCheckCounter < 500){
+
+			  /*Read angular from X -axis*/
+			  xAxisGyroscope(xAxisGyroscopeData);
+
+			  //Turn the MSB and LSB into a signed 16-bit value
+			  xOut16bit_dps = ((short)(xAxisGyroscopeData[0] << 8 | xAxisGyroscopeData[1]));
+			  xOff_dps += ((float) xOut16bit_dps * 0.07); // (+-2000dps)datasheet page 23, Table 3) / 1000 because m (millis)
+
+			  /*Read angular from Y -axis*/
+			  yAxisGyroscope(yAxisGyroscopeData);
+
+			  //Turn the MSB and LSB into a signed 16-bit value
+			  yOut16bit_dps = ((short)(yAxisGyroscopeData[0] << 8 | yAxisGyroscopeData[1]));
+			  yOff_dps += ((float) yOut16bit_dps * 0.07); // (+-2000dps)datasheet page 23, Table 3) / 1000 because m (millis)
+
+			  /*Read angular from Z -axis*/
+			  zAxisGyroscope(zAxisGyroscopeData);
+
+			  //Turn the MSB and LSB into a signed 16-bit value
+			  zOut16bit_dps = ((short)(zAxisGyroscopeData[0] << 8 | zAxisGyroscopeData[1]));
+			  zOff_dps += ((float) zOut16bit_dps * 0.07); // (+-2000dps)datasheet page 23, Table 3) / 1000 because m (millis)
+
+			  gyroDataCheckCounter += 1;
+
+		  }
+
+	 }while(accDataCheckCounter != 500 && gyroDataCheckCounter != 500);
+
+      /*Get average offset for gyro*/
+	  xOff_dps /= 500;
+	  yOff_dps /= 500;
+	  zOff_dps /= 500;
+
+	  /*Get average offset for accelerometer*/
+	  xOff_g /= 500;
+	  yOff_g /= 500;
+	  zOff_g /= 500;
+
+	  //printf("Value of xOff_g: %f g\n", xOff_g);
+	  //printf("Value of yOff_g: %f g\n", yOff_g);
+	  //printf("Value of zOff_g: %f g\n", zOff_g);
+	  //printf("Value of xOff_dps: %f g\n", xOff_dps);
+	  //printf("Value of yOff_dps: %f g\n", yOff_dps);
+	  //printf("Value of zOff_dps: %f g\n", zOff_dps);
+
+	  /*Sytytetään kaikki ledit, jolla indikoidaan että kalibrointi on valmis*/
+	  turnLedsOnAfterCalibration();
+	  turnLedsOff();
+
+
+
+while(1)
+{
+
+#if TEST_TIMER_NUM
+
+	  /*Timer rekisteri, joka mittaa aikaa*/
+	  timer32_1_counter[0] = 0;
+	  /*Muuttuja kiihtyvyyden laskemiseksi ja z-akselin mahdollisen suuren eron flagiksi*/
+	  acceleration = 0, totalRounds = 0;
+
+
+	  /*READ GYROSENSOR DATA IF THERE ARE NEW VALUE AVAILABLE*/
+	  gyroDataCheck = readStatusRegisterGyro(gyroDataCheck);
+
+	  	  if(gyroDataCheck){
+
+	  		  /*Read angular from X -axis*/
+	  		  xAxisGyroscope(xAxisGyroscopeData);
+	  		  //Turn the MSB and LSB into a signed 16-bit value
+	  		  xOut16bit_dps = ((short)(xAxisGyroscopeData[0] << 8 | xAxisGyroscopeData[1]));
+			  xOut_dps = ((float) xOut16bit_dps * 0.07); // (+-2000dps)datasheet page 23, Table 3) / 1000 because m (millis)
+		  	  /*Reduce offset value from measured value*/
+			  xDps = (int)(xOut_dps - xOff_dps);
+
+			  /*******************************************************************************************/
+
+			  /*Read angular from X -axis*/
+			  yAxisGyroscope(yAxisGyroscopeData);
+			  //Turn the MSB and LSB into a signed 16-bit value
+			  yOut16bit_dps = ((short)(yAxisGyroscopeData[0] << 8 | yAxisGyroscopeData[1]));
+			  yOut_dps = ((float) yOut16bit_dps * 0.07); // (+-2000dps)datasheet page 23, Table 3) / 1000 because m (millis)
+		  	  /*Reduce offset value from measured value*/
+			  yDps = (int)(yOut_dps - yOff_dps);
+
+			  //yDpsDt = ((int)(yOut_dps - yOff_dps)) * dt;
+			  //pitch = 0;
+			  //pitch = (atan2(fabsf(zOut_g),sqrt(yOut_g * yOut_g + xOut_g * xOut_g)) * 180.0) / M_PI;
+
+			  //yAngle = 0.95*(yAngle - yDpsDt) + 0.05 * pitch;
+
+			  /*******************************************************************************************/
+
+			  /*Read angular from Z -axis*/
+			  zAxisGyroscope(zAxisGyroscopeData);
+ 			  //Turn the MSB and LSB into a signed 16-bit value
+ 			  zOut16bit_dps = ((short)(zAxisGyroscopeData[0] << 8 | zAxisGyroscopeData[1]));
+ 			  zOut_dps = ((float) zOut16bit_dps * 0.07); // (+-2000dps)datasheet page 23, Table 3) / 1000 because m (millis)
+		  	  /*Reduce offset value from measured value*/
+  			  zDps = (int)(zOut_dps - zOff_dps);
+
+
+	  	  }
+
+	  	 /*READ ACCELEROMETER DATA IF NEW DATA AVAILABLE*/
+	  	  accDataCheck = readStatusRegisterAcc(accDataCheck);
+
+	  	  if(accDataCheck){
+
+	  		  /*Calculate mean of acceleration*/
+	  		  for(int i = 0; i < average; i++){
+
+	  			  /*Read acceleration from X -axis*/
+	  			  xAxisAccelerometer(xAxisAccelerometerData);
+
+	  			  //Turn the MSB and LSB into a signed 16-bit value
+	  			  xOut16bit_g = ((short)(xAxisAccelerometerData[0] << 8 | xAxisAccelerometerData[1]));
+	  			  xOut_g = ((float) xOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+	  			  /*Reduce offset value from measured value*/
+	  			  float temp = xOff_g;
+	  			  /*Subtract this from measured value*/
+	  			  if (xOff_g > 1){
+	  				  temp -= -1.0;
+	  				  xOut_g -= temp;
+
+	  			  }
+
+	  			  /*Add this to measured value*/
+	  			  else if (xOff_g < 1 && xOff_g > 0.0){
+	  				  temp = (1.0-temp);
+	  				  xOut_g += temp;
+	  			  }
+
+
+	  			  /*Subtract, ex. -1.0213 - (-0.0213) this to measured value*/
+	  			  else if (xOff_g < -1){
+	  				  temp += 1.0;
+	  				  xOut_g -= temp;
+	  			  }
+
+	  			  /*Subtract this to measured value = subtract it ex. xOff_g = -0.956 = xOff_g = 0.44 so we need to subract that from
+	  			   * measured value to it to -1g*/
+	  			  else if (xOff_g > -1 && xOff_g < 0.0){
+	  				  temp = (1.0+temp);
+	  				  xOut_g -= temp;
+	  			  }
+
+	  			  /*Jos pystyakselin mitatuissa arvoissas tapahtuu isompi muutos kuin 0,6 niin pomppu on tapahtunut
+	  			   * ja muutetaan flagin arvoksi 1*/
+
+	  			  if(fabs(xOut_g - prevXOut_g) > 0.6)
+	  				  bumpOccuredOnZAxis = 1;
+
+	  			  else
+	  				  prevXOut_g = xOut_g;
+
+
+
+
+
+	  			  /*******************************************************************************************/
+	  			  /*Read acceleration from Y -axis*/
+	  			  yAxisAccelerometer(yAxisAccelerometerData);
+
+	  			  //Turn the MSB and LSB into a signed 16-bit value
+	  			  yOut16bit_g = ((short)(yAxisAccelerometerData[0] << 8 | yAxisAccelerometerData[1]));
+	  			  yOut_g = ((float) yOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+	  			  /*Reduce offset value from measured value*/
+	  			  if(yOff_g <= 0){
+	  				  yOut_g += fabsf(yOff_g);
+	  			  }
+	  			  else{
+	  				  yOut_g -= yOff_g;
+	  			  }
+
+
+	  			  if(fabs(yOut_g - prevYOut_g) > 0.3)
+	  				  bumpOccuredOnZAxis = 1;
+
+	  			  else
+	  				  prevYOut_g = yOut_g;
+
+
+
+
+	  			  /*******************************************************************************************/
+
+	  			  /*Read acceleration from Z -axis*/
+	  			  zAxisAccelerometer(zAxisAccelerometerData);
+
+	  			  //Turn the MSB and LSB into a signed 16-bit value
+	  			  zOut16bit_g = ((short)(zAxisAccelerometerData[0] << 8 | zAxisAccelerometerData[1]));
+	  			  zOut_g = ((float) zOut16bit_g * 0.000061); //(+-2g)datasheet page 23, Table 3) / 1000 because m (millis)
+
+	  			  /*Reduce offset value from measured value*/
+	  			  if(zOff_g <= 0){
+	  				  zOut_g += fabsf(zOff_g);
+	  			  }
+	  			  else{
+	  				  zOut_g -= zOff_g;
+	  			  }
+	  			  /*
+	  			  if(i == 0)
+	  				prevZOut_g = zOut_g;
+
+	  			  else if(zOut_g + fabsf(prevZOut_g) > 1.3)
+	  				bumpOccuredOnZAxis = 1;
+	  			  else{
+	  				prevZOut_g = zOut_g;
+	  			  }
+	  			   */
+
+	  			  /*Lasketaan laitteen kokonaiskiihtyvyys*/
+	  			  if(bumpOccuredOnZAxis == 0)
+	  				  acceleration += sqrt((xOut_g * xOut_g) + (yOut_g * yOut_g) + (zOut_g * zOut_g));
+	  			  else
+	  				  totalRounds++;
+
+	  			  /*******************************************************************************************/
+
+	  			  //acceleration += sqrt(fabsf(1.00 - (xOut_g * xOut_g) - (zOut_g * zOut_g) - (yOut_g * yOut_g)));
+
+	  			  //rawAccValues[0] = (xOut_g);
+	  			  //rawAccValues[1] = (yOut_g);
+	  			  //rawAccValues[2] = (zOut_g);
+
+	  			  //correct_for_gravity(rawAccValues, totalAcc);
+	  			  //acceleration = sqrt(totalAcc[0]*totalAcc[0] + totalAcc[1]*totalAcc[1] + totalAcc[2] * totalAcc[2]);
+
+
+	  		  }
+
+
+
+	  		  /*Jaetaan kiihtyvyys for -loopin kierrosten määrällä, jotta saadaan keskiarvo*/
+	  		  acceleration /= (average-totalRounds);
+	  		  /*Vähennetään maanvetovoima vakio 1g*/
+	  		  acceleration -= 1;
+
+	  		  if(acceleration < 0.0){
+	  			  acceleration = 0;
+	  		  }
+
+	  		  /*Jos nykyisen mitatun kiihtyvyyden ja edellisen mitatun väli on suurempi kuin 0.2g niin
+	  		   * pomppu on tod.näk tapahtunut ja bumpOccured arvoksi annetaan 1, joka nollataan vasta,
+	  		   * kun kiihtyvyys laskee alle 0.05 (ledien sytyttämisen raja-arvo)*/
+	  		  if(acceleration - prevAcceleration >= triggerLevel && brakeInProgress == 0)
+	  			  bumpOccured = 1;
+
+	  		  /*Jos nykyisen mitatun kiihtyvyyden ja edellisen mitatun väli on pienempi kuin 0.15g,
+	  		   * niin lisätään countteriin +1, jos counterin arvo tulee yhtäsuureksi kuin 3 on auto
+	  		   * jatkuvassa kiihtyvyyden muutoksessa(jarrutus).*/
+	  		  else if(//xDps < dpsLvl && xDps > -dpsLvl && yDps < dpsLvl && yDps > -dpsLvl && zDps < dpsLvl && zDps > -dpsLvl &&
+	  				  acceleration - prevAcceleration < triggerLevel &&
+					  prevAcceleration <= acceleration &&
+	  				  acceleration > 0.05 &&
+					  bumpOccured == 0 &&
+					  bumpOccuredOnZAxis == 0 &&
+					  brakeInProgress == 0){
+
+	 	  			 prevAcceleration = acceleration;
+	 	  			 counter += 1;
+
+	  		  }
+	  		  /*Jos kiihtyvyys on alle 0.05 resetoidaan muuttujat*/
+	  		  else if(acceleration < 0.05 && (bumpOccuredOnZAxis == 1 || bumpOccured == 1)){
+
+	  			  bumpOccured = 0;
+	  			  counter = 0;
+	  			  brakeInProgress = 0;
+	  			  bumpOccuredOnZAxis = 0;
+	  		  }
+
+
+	  		  /*Jos counterin arvo on 3 tai suurempi auto jarruttaa niin kutsutaan funktiota joka sytyttää ledejä
+	  		   * nykyisen kiihtyvyyden mukaan, jolloin ledit sytytetään ilman mitään ehtoja nykyisen kiihtyvyyden arvon mukaan*/
+	  		  else if(counter >= 3 && acceleration > 0.05){
+	  			  turnLedsOn(acceleration);
+	  			  brakeInProgress = 1;
+	  		  }
+
+
+
+
+	  		  /*******************************************************************************************/
+
+
+
+	  		  /*If previous measured acceleration is bigger that currently measured
+	  		   * turn leds on so that the currently turned on leds are decreasing*/
+	  		  if(prevAcceleration > acceleration &&
+	  			 brakeInProgress == 0 &&
+				 bumpOccured == 0){
+
+	  			  turnLedsOn(prevAcceleration);
+	  			  prevAcceleration -= 0.03;
+	  			  _delay_ms(50);
+
+	  			  if(prevAcceleration < 0.05)
+	  				  prevAcceleration = acceleration;
+	  		  }
+
+	  		/*Jos jokainen gyroarvo on alle 10
+	  		 * sekä Z akselilla ei ole ollut isoa muutosta (pomppu) eikä kokonaiskiihtyvyydessä ole ollut
+	  		 * isoa muutosta (pomppu) niin sytytetään kiihtyvyyn suurutta vastaava määrä ledeillä.
+	  		 */
+
+	  		  /*
+	  		  else if(xDps < dpsLvl && xDps > -dpsLvl && yDps < dpsLvl && yDps > -dpsLvl && zDps < dpsLvl && zDps > -dpsLvl &&
+	  				 bumpOccured == 0 && bumpOccuredOnZAxis == 0 &&
+					 brakeInProgress == 0)
+	  			  turnLedsOn(acceleration);
+*/
+	  	  	  }
+
+
+	  	  printf("Value of acceleration: %f\n", acceleration);
+	  	  //printf("Value of prevAcceleration: %f\n", prevAcceleration);
+
+	  	  //printf("Counter: %d\n",counter);
+
+	  	  printf("bumpOccuredOnZAxis: %d\n", bumpOccuredOnZAxis);
+	  	  //printf("bumpOccured: %d\n", bumpOccured);
+	  	  //printf("Value of xOut_g: %f g\n", xOut_g);
+	  	  //printf("Value of yOut_g: %f g\n", yOut_g);
+	  	  //printf("Value of zOut_g: %f g\n", zOut_g);
+
+		  //printf("Angle of Pitch: %f  degree\n", pitch);
+		  //printf("Angle of Roll:  %f  degree\n", roll);
+
+		  //printf("Value of xAngle: %f degrees\n", xAngle);
+		  //printf("Value of yAngle: %f degrees\n", yAngle);
+
+	  	  //printf("Value of yDps: %d dps\n", yDps);
+		  //printf("Value of xDps: %d dps\n", xDps);
+		  //printf("Value of zDps: %d dps\n", zDps);
+
+
+	      elapsed  = timer32_1_counter[0];
+	  	  dt = (float)elapsed / 1000;
+	  	  //printf("Elapsed time: %f\n", dt);
+
+#endif
+
+	  }
+
+}

@@ -1,0 +1,56 @@
+/*
+ * accelerometer.h
+ *
+ *  Created on: 23.11.2017
+ *      Author: Markkula
+ */
+
+#ifndef ACCELEROMETER_H_
+#define ACCELEROMETER_H_
+
+
+void I2CInit( void );
+void sendData(unsigned int address, unsigned int data);
+
+
+int whoIAm(int a);
+void _delay_ms (uint16_t ms);
+
+/******************************************************************************/
+
+#define CTRL1_XL 0x10 //Linear acceleration sensor control register
+#define CTRL2_G 0x11 //Angular rate sensor control register
+
+
+
+
+
+#define INT1_CTRL 0x0D
+
+
+
+
+/*----------------------------------------------------------------------------*/
+
+
+
+#define PCF8594_ADDR        0xA0
+
+#define I2CMASTER           0x01
+#define I2CSLAVE            0x02
+
+#define I2CONCLR_AAC        (0x1<<2)    /* I2C Control clear Register */
+#define I2CONCLR_SIC        (0x1<<3)
+#define I2CONCLR_STAC       (0x1<<5)
+#define I2CONCLR_I2ENC      (0x1<<6)
+
+#define I2SCLH_SCLH         0x00000180  /* I2C SCL Duty Cycle High Reg */
+#define I2SCLL_SCLL         0x00000180  /* I2C SCL Duty Cycle Low Reg */
+
+#define I2CONSET_I2EN       (0x1<<6)    /* I2C Control Set Register */
+#define I2CONSET_AA         (0x1<<2)
+#define I2CONSET_SI         (0x1<<3)
+#define I2CONSET_STO        (0x1<<4)
+#define I2CONSET_STA        (0x1<<5)
+
+#endif /* ACCELEROMETER_H_ */

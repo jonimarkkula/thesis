@@ -1,0 +1,549 @@
+/*
+ * ledSetup.c
+ *
+ *  Created on: 9.11.2017
+ *      Author: Markkula
+ *  Description: This .c and .h files does all the led on/off -turning and initialization
+ */
+#include "LPC11Uxx.h"                        /* LPC11Uxx definitions */
+#include "gpio.h"
+#include "ledSetup.h"
+#include "accelerometer.h"
+
+volatile float brakePowerRange[12];
+float rangeSet = 0.2;
+
+
+void initializeBrakePowerArray(){
+
+	brakePowerRange[0] = rangeSet;
+	for(int i = 1; i < 12; i++){
+
+		brakePowerRange[i] = brakePowerRange[i-1] + 0.05;
+	}
+
+}
+
+
+/*Function initializing Led's as outputs when program starts*/
+void setLedPinsOutput(){
+
+    /*Set LED'X'_L's to outputs*/
+	GPIOSetDir( LED1_L_ON );	/*LED 1L*/
+	GPIOSetDir( LED2_L_ON );	/*LED 2L*/
+	GPIOSetDir( LED3_L_ON );	/*LED 3L*/
+	GPIOSetDir( LED4_L_ON );	/*LED 4L*/
+	GPIOSetDir( LED5_L_ON );	/*LED 5L*/
+	GPIOSetDir( LED6_L_ON );	/*LED 6L*/
+	GPIOSetDir( LED7_L_ON );	/*LED 7L*/
+	GPIOSetDir( LED8_L_ON );	/*LED 8L*/
+	GPIOSetDir( LED9_L_ON );	/*LED 9L*/
+
+	/*We need to reset PIO0_11 -> PIO0_13 manually, then assign it to be
+	 *PIO -port instead of ex. TDI, TMS... and after that set it output -pin*/
+	LPC_IOCON->TDI_PIO0_11 &= ~(0x07);
+	LPC_IOCON->TDI_PIO0_11 |= 0x01;
+	GPIOSetDir( LED10_L_ON );	/*LED 10L*/
+	LPC_IOCON->TMS_PIO0_12 &= ~(0x07);
+	LPC_IOCON->TMS_PIO0_12 |= 0x01;
+	GPIOSetDir( LED11_L_ON );	/*LED 11L*/
+	LPC_IOCON->TDO_PIO0_13 &= ~(0x07);
+	LPC_IOCON->TDO_PIO0_13 |= 0x01;
+	GPIOSetDir( LED12_L_ON );	/*LED 12L*/
+	LPC_IOCON->TRST_PIO0_14 &= ~(0x07);
+	LPC_IOCON->TRST_PIO0_14 |= 0x01;
+	GPIOSetDir( LED1_R_ON );	/*LED 12L*/
+	/*******************************************************************/
+
+	/*Set LED'X'_R's to outputs*/
+	GPIOSetDir( LED2_R_ON );	/*LED 2L*/
+	GPIOSetDir( LED3_R_ON );	/*LED 3L*/
+	GPIOSetDir( LED4_R_ON );	/*LED 4L*/
+	GPIOSetDir( LED5_R_ON );	/*LED 5L*/
+	GPIOSetDir( LED6_R_ON );	/*LED 6L*/
+	GPIOSetDir( LED7_R_ON );	/*LED 7L*/
+	GPIOSetDir( LED8_R_ON );	/*LED 8L*/
+	GPIOSetDir( LED9_R_ON );	/*LED 9L*/
+	GPIOSetDir( LED10_R_ON );	/*LED 7L*/
+	GPIOSetDir( LED11_R_ON );	/*LED 8L*/
+	GPIOSetDir( LED12_R_ON );	/*LED 9L*/
+
+
+	/*Activate PIO1_20 as input pin and brakePowerer on falling edges
+	 *Connected to the INT1 on accelerometer MMA8452Q		  */
+	//GPIOSetDir(PORT1, 20, 0);
+	/* channel 0, port1_20, edge brakePowerer, active low. */
+	//GPIOSetFlexInterrupt( 0, 1, 20, 0, 0 );
+	/*Enable interrupt*/
+	//GPIOFlexIntEnable( 0, 0 );
+
+	LPC_IOCON->PIO0_21 	= 0x90;
+	GPIOSetDir( I2C_SA0 );
+	GPIOSetBitValue( 0, 21, 0);  //I2C address select!
+
+
+}
+
+
+
+/*Function for turning all Led's off*/
+void turnLedsOff(){
+
+	GPIOSetBitValue( LED1_L_OFF );
+	GPIOSetBitValue( LED2_L_OFF );
+	GPIOSetBitValue( LED3_L_OFF );
+	GPIOSetBitValue( LED4_L_OFF );
+	GPIOSetBitValue( LED5_L_OFF );
+	GPIOSetBitValue( LED6_L_OFF );
+	GPIOSetBitValue( LED7_L_OFF );
+	GPIOSetBitValue( LED8_L_OFF );
+	GPIOSetBitValue( LED9_L_OFF );
+	GPIOSetBitValue( LED10_L_OFF );
+	GPIOSetBitValue( LED11_L_OFF );
+	GPIOSetBitValue( LED12_L_OFF );
+
+	GPIOSetBitValue( LED1_R_OFF );
+	GPIOSetBitValue( LED2_R_OFF );
+	GPIOSetBitValue( LED3_R_OFF );
+	GPIOSetBitValue( LED4_R_OFF );
+	GPIOSetBitValue( LED5_R_OFF );
+	GPIOSetBitValue( LED6_R_OFF );
+	GPIOSetBitValue( LED7_R_OFF );
+	GPIOSetBitValue( LED8_R_OFF );
+	GPIOSetBitValue( LED9_R_OFF );
+	GPIOSetBitValue( LED10_R_OFF );
+	GPIOSetBitValue( LED11_R_OFF );
+	GPIOSetBitValue( LED12_R_OFF );
+
+}
+
+void turnLedsOn(float brakePower){
+
+					if (brakePower >= brakePowerRange[0] && brakePower <= brakePowerRange[1]){
+
+							GPIOSetBitValue( LED1_L_ON );
+							GPIOSetBitValue( LED2_L_OFF );
+							GPIOSetBitValue( LED3_L_OFF );
+							GPIOSetBitValue( LED4_L_OFF );
+							GPIOSetBitValue( LED5_L_OFF );
+							GPIOSetBitValue( LED6_L_OFF );
+							GPIOSetBitValue( LED7_L_OFF );
+							GPIOSetBitValue( LED8_L_OFF );
+							GPIOSetBitValue( LED9_L_OFF );
+							GPIOSetBitValue( LED10_L_OFF );
+							GPIOSetBitValue( LED11_L_OFF );
+							GPIOSetBitValue( LED12_L_OFF );
+
+							GPIOSetBitValue( LED1_R_ON );
+							GPIOSetBitValue( LED2_R_OFF );
+							GPIOSetBitValue( LED3_R_OFF );
+							GPIOSetBitValue( LED4_R_OFF );
+							GPIOSetBitValue( LED5_R_OFF );
+							GPIOSetBitValue( LED6_R_OFF );
+							GPIOSetBitValue( LED7_R_OFF );
+							GPIOSetBitValue( LED8_R_OFF );
+							GPIOSetBitValue( LED9_R_OFF );
+							GPIOSetBitValue( LED10_R_OFF );
+							GPIOSetBitValue( LED11_R_OFF );
+							GPIOSetBitValue( LED12_R_OFF );
+
+					  }
+
+					  else if (brakePower > brakePowerRange[1] && brakePower <= brakePowerRange[2]){
+
+	 					 	GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_OFF );
+		 					GPIOSetBitValue( LED4_L_OFF );
+		 					GPIOSetBitValue( LED5_L_OFF );
+		 					GPIOSetBitValue( LED6_L_OFF );
+		 					GPIOSetBitValue( LED7_L_OFF );
+		 					GPIOSetBitValue( LED8_L_OFF );
+		 					GPIOSetBitValue( LED9_L_OFF );
+		 					GPIOSetBitValue( LED10_L_OFF );
+		 					GPIOSetBitValue( LED11_L_OFF );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_OFF );
+		 					GPIOSetBitValue( LED4_R_OFF );
+		 					GPIOSetBitValue( LED5_R_OFF );
+		 					GPIOSetBitValue( LED6_R_OFF );
+		 					GPIOSetBitValue( LED7_R_OFF );
+		 					GPIOSetBitValue( LED8_R_OFF );
+		 					GPIOSetBitValue( LED9_R_OFF );
+		 					GPIOSetBitValue( LED10_R_OFF );
+		 					GPIOSetBitValue( LED11_R_OFF );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+	        		  }
+
+
+					  else if (brakePower > brakePowerRange[2] && brakePower <= brakePowerRange[3]){
+
+						    GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_OFF );
+		 					GPIOSetBitValue( LED5_L_OFF );
+		 					GPIOSetBitValue( LED6_L_OFF );
+		 					GPIOSetBitValue( LED7_L_OFF );
+		 					GPIOSetBitValue( LED8_L_OFF );
+		 					GPIOSetBitValue( LED9_L_OFF );
+		 					GPIOSetBitValue( LED10_L_OFF );
+		 					GPIOSetBitValue( LED11_L_OFF );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_OFF );
+		 					GPIOSetBitValue( LED5_R_OFF );
+		 					GPIOSetBitValue( LED6_R_OFF );
+		 					GPIOSetBitValue( LED7_R_OFF );
+		 					GPIOSetBitValue( LED8_R_OFF );
+		 					GPIOSetBitValue( LED9_R_OFF );
+		 					GPIOSetBitValue( LED10_R_OFF );
+		 					GPIOSetBitValue( LED11_R_OFF );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+					   		 }
+
+					 else if (brakePower > brakePowerRange[3] && brakePower <= brakePowerRange[4]){
+
+	 					 	GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_ON );
+		 					GPIOSetBitValue( LED5_L_OFF );
+		 					GPIOSetBitValue( LED6_L_OFF );
+		 					GPIOSetBitValue( LED7_L_OFF );
+		 					GPIOSetBitValue( LED8_L_OFF );
+		 					GPIOSetBitValue( LED9_L_OFF );
+		 					GPIOSetBitValue( LED10_L_OFF );
+		 					GPIOSetBitValue( LED11_L_OFF );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_ON );
+		 					GPIOSetBitValue( LED5_R_OFF );
+		 					GPIOSetBitValue( LED6_R_OFF );
+		 					GPIOSetBitValue( LED7_R_OFF );
+		 					GPIOSetBitValue( LED8_R_OFF );
+		 					GPIOSetBitValue( LED9_R_OFF );
+		 					GPIOSetBitValue( LED10_R_OFF );
+		 					GPIOSetBitValue( LED11_R_OFF );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+					  }
+
+					 else if (brakePower > brakePowerRange[4] && brakePower <= brakePowerRange[5]){
+
+	 					 	GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_ON );
+		 					GPIOSetBitValue( LED5_L_ON );
+		 					GPIOSetBitValue( LED6_L_OFF );
+		 					GPIOSetBitValue( LED7_L_OFF );
+		 					GPIOSetBitValue( LED8_L_OFF );
+		 					GPIOSetBitValue( LED9_L_OFF );
+		 					GPIOSetBitValue( LED10_L_OFF );
+		 					GPIOSetBitValue( LED11_L_OFF );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_ON );
+		 					GPIOSetBitValue( LED5_R_ON );
+		 					GPIOSetBitValue( LED6_R_OFF );
+		 					GPIOSetBitValue( LED7_R_OFF );
+		 					GPIOSetBitValue( LED8_R_OFF );
+		 					GPIOSetBitValue( LED9_R_OFF );
+		 					GPIOSetBitValue( LED10_R_OFF );
+		 					GPIOSetBitValue( LED11_R_OFF );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+					  }
+
+					 else if (brakePower > brakePowerRange[5] && brakePower <= brakePowerRange[6]){
+
+	 					 	GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_ON );
+		 					GPIOSetBitValue( LED5_L_ON );
+		 					GPIOSetBitValue( LED6_L_ON );
+		 					GPIOSetBitValue( LED7_L_OFF );
+		 					GPIOSetBitValue( LED8_L_OFF );
+		 					GPIOSetBitValue( LED9_L_OFF );
+		 					GPIOSetBitValue( LED10_L_OFF );
+		 					GPIOSetBitValue( LED11_L_OFF );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_ON );
+		 					GPIOSetBitValue( LED5_R_ON );
+		 					GPIOSetBitValue( LED6_R_ON );
+		 					GPIOSetBitValue( LED7_R_OFF );
+		 					GPIOSetBitValue( LED8_R_OFF );
+		 					GPIOSetBitValue( LED9_R_OFF );
+		 					GPIOSetBitValue( LED10_R_OFF );
+		 					GPIOSetBitValue( LED11_R_OFF );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+	 				  }
+
+					 else if (brakePower > brakePowerRange[6] && brakePower <= brakePowerRange[7]){
+
+	 					 	GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_ON );
+		 					GPIOSetBitValue( LED5_L_ON );
+		 					GPIOSetBitValue( LED6_L_ON );
+		 					GPIOSetBitValue( LED7_L_ON );
+		 					GPIOSetBitValue( LED8_L_OFF );
+		 					GPIOSetBitValue( LED9_L_OFF );
+		 					GPIOSetBitValue( LED10_L_OFF );
+		 					GPIOSetBitValue( LED11_L_OFF );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_ON );
+		 					GPIOSetBitValue( LED5_R_ON );
+		 					GPIOSetBitValue( LED6_R_ON );
+		 					GPIOSetBitValue( LED7_R_ON );
+		 					GPIOSetBitValue( LED8_R_OFF );
+		 					GPIOSetBitValue( LED9_R_OFF );
+		 					GPIOSetBitValue( LED10_R_OFF );
+		 					GPIOSetBitValue( LED11_R_OFF );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+	 				 }
+
+					 else if (brakePower > brakePowerRange[7] && brakePower <= brakePowerRange[8]){
+
+		 					GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_ON );
+		 					GPIOSetBitValue( LED5_L_ON );
+		 					GPIOSetBitValue( LED6_L_ON );
+		 					GPIOSetBitValue( LED7_L_ON );
+		 					GPIOSetBitValue( LED8_L_ON );
+		 					GPIOSetBitValue( LED9_L_OFF );
+		 					GPIOSetBitValue( LED10_L_OFF );
+		 					GPIOSetBitValue( LED11_L_OFF );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_ON );
+		 					GPIOSetBitValue( LED5_R_ON );
+		 					GPIOSetBitValue( LED6_R_ON );
+		 					GPIOSetBitValue( LED7_R_ON );
+		 					GPIOSetBitValue( LED8_R_ON );
+		 					GPIOSetBitValue( LED9_R_OFF );
+		 					GPIOSetBitValue( LED10_R_OFF );
+		 					GPIOSetBitValue( LED11_R_OFF );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+	 				 }
+
+					 else if (brakePower > brakePowerRange[8] && brakePower <= brakePowerRange[9]){
+
+		 					GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_ON );
+		 					GPIOSetBitValue( LED5_L_ON );
+		 					GPIOSetBitValue( LED6_L_ON );
+		 					GPIOSetBitValue( LED7_L_ON );
+		 					GPIOSetBitValue( LED8_L_ON );
+		 					GPIOSetBitValue( LED9_L_ON );
+		 					GPIOSetBitValue( LED10_L_OFF );
+		 					GPIOSetBitValue( LED11_L_OFF );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_ON );
+		 					GPIOSetBitValue( LED5_R_ON );
+		 					GPIOSetBitValue( LED6_R_ON );
+		 					GPIOSetBitValue( LED7_R_ON );
+		 					GPIOSetBitValue( LED8_R_ON );
+		 					GPIOSetBitValue( LED9_R_ON );
+		 					GPIOSetBitValue( LED10_R_OFF );
+		 					GPIOSetBitValue( LED11_R_OFF );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+	 				 }
+
+					 else if (brakePower > brakePowerRange[9] && brakePower <= brakePowerRange[10]){
+
+		 					GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_ON );
+		 					GPIOSetBitValue( LED5_L_ON );
+		 					GPIOSetBitValue( LED6_L_ON );
+		 					GPIOSetBitValue( LED7_L_ON );
+		 					GPIOSetBitValue( LED8_L_ON );
+		 					GPIOSetBitValue( LED9_L_ON );
+		 					GPIOSetBitValue( LED10_L_ON );
+		 					GPIOSetBitValue( LED11_L_OFF );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_ON );
+		 					GPIOSetBitValue( LED5_R_ON );
+		 					GPIOSetBitValue( LED6_R_ON );
+		 					GPIOSetBitValue( LED7_R_ON );
+		 					GPIOSetBitValue( LED8_R_ON );
+		 					GPIOSetBitValue( LED9_R_ON );
+		 					GPIOSetBitValue( LED10_R_ON );
+		 					GPIOSetBitValue( LED11_R_OFF );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+	 				 }
+
+					 else if (brakePower > brakePowerRange[10] && brakePower <= brakePowerRange[11]){
+
+		 					GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_ON );
+		 					GPIOSetBitValue( LED5_L_ON );
+		 					GPIOSetBitValue( LED6_L_ON );
+		 					GPIOSetBitValue( LED7_L_ON );
+		 					GPIOSetBitValue( LED8_L_ON );
+		 					GPIOSetBitValue( LED9_L_ON );
+		 					GPIOSetBitValue( LED10_L_ON );
+		 					GPIOSetBitValue( LED11_L_ON );
+		 					GPIOSetBitValue( LED12_L_OFF );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_ON );
+		 					GPIOSetBitValue( LED5_R_ON );
+		 					GPIOSetBitValue( LED6_R_ON );
+		 					GPIOSetBitValue( LED7_R_ON );
+		 					GPIOSetBitValue( LED8_R_ON );
+		 					GPIOSetBitValue( LED9_R_ON );
+		 					GPIOSetBitValue( LED10_R_ON );
+		 					GPIOSetBitValue( LED11_R_ON );
+		 					GPIOSetBitValue( LED12_R_OFF );
+
+	 				 }
+
+	 				 else if (brakePower > brakePowerRange[11]){
+
+		 					GPIOSetBitValue( LED1_L_ON );
+		 					GPIOSetBitValue( LED2_L_ON );
+		 					GPIOSetBitValue( LED3_L_ON );
+		 					GPIOSetBitValue( LED4_L_ON );
+		 					GPIOSetBitValue( LED5_L_ON );
+		 					GPIOSetBitValue( LED6_L_ON );
+		 					GPIOSetBitValue( LED7_L_ON );
+		 					GPIOSetBitValue( LED8_L_ON );
+		 					GPIOSetBitValue( LED9_L_ON );
+		 					GPIOSetBitValue( LED10_L_ON );
+		 					GPIOSetBitValue( LED11_L_ON );
+		 					GPIOSetBitValue( LED12_L_ON );
+
+		 					GPIOSetBitValue( LED1_R_ON );
+		 					GPIOSetBitValue( LED2_R_ON );
+		 					GPIOSetBitValue( LED3_R_ON );
+		 					GPIOSetBitValue( LED4_R_ON );
+		 					GPIOSetBitValue( LED5_R_ON );
+		 					GPIOSetBitValue( LED6_R_ON );
+		 					GPIOSetBitValue( LED7_R_ON );
+		 					GPIOSetBitValue( LED8_R_ON );
+		 					GPIOSetBitValue( LED9_R_ON );
+		 					GPIOSetBitValue( LED10_R_ON );
+		 					GPIOSetBitValue( LED11_R_ON );
+		 					GPIOSetBitValue( LED12_R_ON );
+	 				 }
+
+
+	 				 else {
+
+							GPIOSetBitValue( LED1_L_OFF );
+							GPIOSetBitValue( LED2_L_OFF );
+							GPIOSetBitValue( LED3_L_OFF );
+							GPIOSetBitValue( LED4_L_OFF );
+							GPIOSetBitValue( LED5_L_OFF );
+							GPIOSetBitValue( LED6_L_OFF );
+							GPIOSetBitValue( LED7_L_OFF );
+							GPIOSetBitValue( LED8_L_OFF );
+							GPIOSetBitValue( LED9_L_OFF );
+							GPIOSetBitValue( LED10_L_OFF );
+							GPIOSetBitValue( LED11_L_OFF );
+							GPIOSetBitValue( LED12_L_OFF );
+
+							GPIOSetBitValue( LED1_R_OFF );
+							GPIOSetBitValue( LED2_R_OFF );
+							GPIOSetBitValue( LED3_R_OFF );
+							GPIOSetBitValue( LED4_R_OFF );
+							GPIOSetBitValue( LED5_R_OFF );
+							GPIOSetBitValue( LED6_R_OFF );
+							GPIOSetBitValue( LED7_R_OFF );
+							GPIOSetBitValue( LED8_R_OFF );
+							GPIOSetBitValue( LED9_R_OFF );
+							GPIOSetBitValue( LED10_R_OFF );
+							GPIOSetBitValue( LED11_R_OFF );
+							GPIOSetBitValue( LED12_R_OFF );
+
+
+			}
+
+
+}
+
+void turnLedsOnAfterCalibration(){
+
+
+		GPIOSetBitValue( LED1_L_ON );
+		GPIOSetBitValue( LED2_L_ON );
+		GPIOSetBitValue( LED3_L_ON );
+		GPIOSetBitValue( LED4_L_ON );
+		GPIOSetBitValue( LED5_L_ON );
+		GPIOSetBitValue( LED6_L_ON );
+		GPIOSetBitValue( LED7_L_ON );
+		GPIOSetBitValue( LED8_L_ON );
+		GPIOSetBitValue( LED9_L_ON );
+		GPIOSetBitValue( LED10_L_ON );
+		GPIOSetBitValue( LED11_L_ON );
+		GPIOSetBitValue( LED12_L_ON );
+
+		GPIOSetBitValue( LED1_R_ON );
+		GPIOSetBitValue( LED2_R_ON );
+		GPIOSetBitValue( LED3_R_ON );
+		GPIOSetBitValue( LED4_R_ON );
+		GPIOSetBitValue( LED5_R_ON );
+		GPIOSetBitValue( LED6_R_ON );
+		GPIOSetBitValue( LED7_R_ON );
+		GPIOSetBitValue( LED8_R_ON );
+		GPIOSetBitValue( LED9_R_ON );
+		GPIOSetBitValue( LED10_R_ON );
+		GPIOSetBitValue( LED11_R_ON );
+		GPIOSetBitValue( LED12_R_ON );
+
+		_delay_ms(1000);
+
+
+}
